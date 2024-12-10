@@ -1,0 +1,202 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+
+// Traffic Light Timing Constants (in milliseconds)
+#define DEFAULT_RED_DURATION 10000      // 10 seconds
+#define DEFAULT_YELLOW_DURATION 5000    // 5 seconds
+#define DEFAULT_GREEN_DURATION 10000    // 10 seconds
+#define OBSTACLE_CHECK_INTERVAL 10000   // 10 seconds to check for obstacle
+#define DISTANCE_THRESHOLD 20           // Distance threshold for obstacle detection (in cm)
+
+// Pin Definitions for PORTD
+#define RED_LED_PIN 2
+#define YELLOW_LED_PIN 3
+#define GREEN_LED_PIN 4
+#define BUTTON_PIN 7
+
+// Pin Definitions for Ultrasonic Sensor (PORTB)
+#define TRIG_PIN 0
+#define ECHO_PIN 1
+
+// Global Variables
+volatile bool buttonPressed = false;    // Flag for button press
+volatile bool obstacleDetected = false; // Flag for obstacle detection
+
+// Function to set up GPIOs using registers
+void setupGPIO() {
+    // Set RED, YELLOW, GREEN LEDs as outputs (PORTD pins 2, 3, 4)
+    DDRD |= (1 << RED_LED_PIN) | (1 << ORANGE_LED_PIN) | (1 << GREEN_LED_PIN);
+    // Set BUTTON_PIN (PORTD pin 7) as input with pull-up resistor
+    DDRD &= ~(1 << BUTTON_PIN); // Input
+    PORTD |= (1 << BUTTON_PIN); // Enable pull-up resistor
+    // Set TRIG_PIN as output and ECHO_PIN as input (PORTB pins 0 and 1)
+    DDRB |= (1 << TRIG_PIN);    // TRIG_PIN as output
+    DDRB &= ~(1 << ECHO_PIN);   // ECHO_PIN as input
+}
+
+// Function to initialize serial communication
+void setupSerial() {
+    // Set baud rate to 9600 (assuming 16MHz clock)
+    uint16_t baud_prescaler = ((F_CPU / (16UL * 9600UL)) - 1);
+    UBRR0H = (uint8_t)(baud_prescaler >> 8);
+    UBRR0L = (uint8_t)baud_prescaler;
+    UCSR0B = (1 << TXEN0);  // Enable transmitter
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8-bit data, no parity, 1 stop bit
+}
+
+// Function to send a character over serial
+void serialWriteChar(char c) {
+    while (!(UCSR0A & (1 << UDRE0))); // Wait for the transmit buffer to be empty
+    UDR0 = c; // Send the character
+}
+
+// Function to send a string over serial
+void serialWriteString(const char* str) {
+    while (*str) {
+        serialWriteChar(*str++);
+    }
+}
+
+// Function to send a number over serial
+void serialWriteNumber(int num) {
+    char buffer[10];
+    itoa(num, buffer, 10); // Convert number to string
+    serialWriteString(buffer);
+}
+
+// Function to turn on a specific LED
+void turnOnLED(uint8_t ledPin) {
+    PORTD &= ~((1 << RED_LED_PIN) | (1 << YELLOW_LED_PIN) | (1 << GREEN_LED_PIN)); // Turn off all LEDs
+    PORTD |= (1 << ledPin); // Turn on the specified LED
+}
+
+// Function to read distance using the ultrasonic sensor
+unsigned long readUltrasonicSensor() {
+    // Send 10us trigger pulse
+    PORTB |= (1 << TRIG_PIN);
+    _delay_us(10);
+    PORTB &= ~(1 << TRIG_PIN);
+
+    // Wait for echo start
+    while (!(PINB & (1 << ECHO_PIN)));
+
+    // Measure echo duration
+    unsigned long duration = 0;
+    while (PINB & (1 << ECHO_PIN)) {
+        _delay_us(1);
+        duration++;
+    }
+
+    // Convert duration to distance in cm (assuming speed of sound = 343m/s)
+    return (duration / 58);
+}
+
+// Function to handle obstacle detection in real-time
+void handleObstacle() {
+    turnOnLED(RED_LED_PIN); // Turn on red light immediately
+    serialWriteString("OBSTACLE DETECTED\n");
+    while (obstacleDetected) {
+        _delay_ms(OBSTACLE_CHECK_INTERVAL); // Wait 10 seconds before checking again
+        unsigned long distance = readUltrasonicSensor(); // Check distance
+        if (distance < DISTANCE_THRESHOLD) { // Obstacle still there
+            serialWriteString("OBSTACLE STILL THERE\n");
+        } else { // Obstacle removed
+            obstacleDetected = false; // Reset obstacle flag
+        }
+    }
+}
+
+// Function to handle button press in real time
+void handleButton() {
+    if (!(PIND & (1 << BUTTON_PIN))) { // Check if button is pressed (active LOW)
+        if (!buttonPressed) { // If button was not already pressed
+            buttonPressed = true; // Set button press flag
+            serialWriteString("BUTTON PRESSED\n"); // Print "BUTTON PRESSED"
+            turnOnLED(RED_LED_PIN); // Immediately turn on red light
+            _delay_ms(10000); // Wait for pedestrian crossing
+            buttonPressed = false; // Reset button flag
+        }
+    }
+}
+
+// Traffic Light Control Function
+void trafficLightControl() {
+    // RED light
+    turnOnLED(RED_LED_PIN);
+    serialWriteString("TRAFFIC LIGHT RED\n");
+    for (int i = 0; i < DEFAULT_RED_DURATION / 100; i++) {
+        observeSensor(); // Continuously monitor sensor
+        handleButton();  // Check button state
+        if (obstacleDetected) {
+            handleObstacle(); // Handle obstacle detection
+            return; // Exit to handle obstacle
+        }
+        _delay_ms(100);
+    }
+
+    // ORANGE light
+    turnOnLED(ORANGE_LED_PIN);
+    serialWriteString("TRAFFIC LIGHT ORANGE\n");
+    for (int i = 0; i < DEFAULT_YELLOW_DURATION / 100; i++) {
+        observeSensor(); // Continuously monitor sensor
+        handleButton();  // Check button state
+        if (obstacleDetected) {
+            handleObstacle(); // Handle obstacle detection
+            return; // Exit to handle obstacle
+        }
+        _delay_ms(100);
+    }
+
+    // GREEN light
+    turnOnLED(GREEN_LED_PIN);
+    serialWriteString("TRAFFIC LIGHT GREEN\n");
+    for (int i = 0; i < DEFAULT_GREEN_DURATION / 100; i++) {
+        observeSensor(); // Continuously monitor sensor
+        handleButton();  // Check button state
+        if (obstacleDetected) {
+            handleObstacle(); // Handle obstacle detection
+            return; // Exit to handle obstacle
+        }
+        _delay_ms(100);
+    }
+
+    // YELLOW light (transition back to RED)
+    turnOnLED(YELLOW_LED_PIN);
+    serialWriteString("TRAFFIC LIGHT ORANGE\n");
+    for (int i = 0; i < DEFAULT_YELLOW_DURATION / 100; i++) {
+        observeSensor(); // Continuously monitor sensor
+        handleButton();  // Check button state
+        if (obstacleDetected) {
+            handleObstacle(); // Handle obstacle detection
+            return; // Exit to handle obstacle
+        }
+        _delay_ms(100);
+    }
+}
+
+// Function to observe sensor status
+void observeSensor() {
+    unsigned long distance = readUltrasonicSensor(); // Read distance
+    if (distance < DISTANCE_THRESHOLD) { // If obstacle is closer than threshold
+        obstacleDetected = true; // Set obstacle detection flag
+    }
+}
+
+// Setup Function
+void setup() {
+    setupGPIO();        // Initialize GPIO
+    setupSerial();      // Initialize serial communication
+}
+
+// Main Loop
+void loop() {
+    observeSensor(); // Continuously observe the sensor
+    handleButton();  // Continuously check the button
+
+    if (obstacleDetected) {
+        handleObstacle(); // Handle obstacle if detected
+    } else {
+        trafficLightControl(); // Normal traffic light sequence
+    }
+}
