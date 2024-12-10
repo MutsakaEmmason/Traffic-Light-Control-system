@@ -1,7 +1,7 @@
 # Traffic-Light-Control-system.
 A microcontroller-based traffic light control system using four Arduino boards, designed to handle a single-direction road. The project features pedestrian crossing control, obstacle detection using an ultrasonic sensor, and dynamic light adjustments, implemented with direct register manipulation.
 
-Features
+Features;
 
 Traffic Light Control: Red, Yellow, and Green LEDs cycle with default timings.
 
