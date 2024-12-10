@@ -144,6 +144,8 @@ WIDTH UPDATED: New width saved
 Project Structure
 
 traffic-light-control/
+
+
 ├── board1_master.ino    # Code for Board 1
 
 ├──board2_ultrasonic.ino  # Code for Board 2
@@ -154,6 +156,8 @@ traffic-light-control/
 ├── board4_eeprom.ino    # Code for Board 4
 
 └── README.md            # Documentation
+
+
 
 Future Improvements
 
