@@ -1,0 +1,77 @@
+#include <avr/io.h>
+#include <avr/eeprom.h>
+#include <util/delay.h>
+
+// EEPROM address for road width
+#define ROAD_WIDTH_ADDRESS 0x00
+
+// Define the baud rate for serial communication
+#define F_CPU 16000000UL // Assuming a 16 MHz clock
+#define BAUD 9600
+#define MY_UBRR F_CPU/16/BAUD-1
+
+void uart_init() {
+    unsigned int ubrr = MY_UBRR;
+    UBRR0H = (unsigned char)(ubrr >> 8);
+    UBRR0L = (unsigned char)ubrr;
+    UCSR0B = (1 << RXEN0) | (1 << TXEN0); // Enable receiver and transmitter
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8-bit data
+}
+
+void uart_send(char data) {
+    while (!(UCSR0A & (1 << UDRE0))); // Wait for empty transmit buffer
+    UDR0 = data; // Send data
+}
+
+char uart_receive() {
+    while (!(UCSR0A & (1 << RXC0))); // Wait for data to be received
+    return UDR0; // Get and return received data from the buffer
+}
+
+void uart_send_string(const char *str) {
+    while (*str) {
+        uart_send(*str++);
+    }
+}
+
+// Function to read the road width from EEPROM
+uint8_t read_road_width() {
+    return eeprom_read_byte((uint8_t *)ROAD_WIDTH_ADDRESS);
+}
+
+// Function to save the road width to EEPROM
+void save_road_width(uint8_t width) {
+    eeprom_write_byte((uint8_t *)ROAD_WIDTH_ADDRESS, width);
+}
+
+void handle_master_request(char command) {
+    if (command == 'R') { // Request for road width
+        uint8_t road_width = read_road_width();
+        uart_send_string("WIDTH:");
+        uart_send(road_width + '0'); // Send road width
+        uart_send('\n');
+    } else if (command == 'U') { // Update road width
+        char new_width = uart_receive(); // Receive new width
+        save_road_width(new_width - '0'); // Save it (convert from char to int)
+        uart_send_string("WIDTH UPDATED\n");
+    } else if (command == 'L') { // Log an event
+        uart_send_string("EVENT: Pedestrian Crossing\n");
+    }
+}
+
+int main() {
+    uart_init();
+    
+    // Initialize road width if not set
+    uint8_t road_width = read_road_width();
+    if (road_width == 0xFF) { // EEPROM not initialized
+        save_road_width(20); // Set default road width to 20 cm
+    }
+
+    while (1) {
+        if (UCSR0A & (1 << RXC0)) { // Check if data is available in the serial buffer
+            char command = uart_receive(); // Receive the command
+            handle_master_request(command); // Handle the command
+        }
+    }
+}
